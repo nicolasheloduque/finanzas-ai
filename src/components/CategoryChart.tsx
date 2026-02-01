@@ -47,8 +47,8 @@ export default function CategoryChart({ transactions }: CategoryChartProps) {
   return (
     <div className="flex flex-col lg:flex-row items-center gap-6">
       {/* Chart */}
-      <div className="w-full lg:w-1/2 h-64">
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="w-full lg:w-1/2" style={{ height: '256px', minHeight: '256px' }}>
+        <ResponsiveContainer width="100%" height={256}>
           <PieChart>
             <Pie
               data={data}
