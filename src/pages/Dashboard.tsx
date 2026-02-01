@@ -11,7 +11,6 @@ import {
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
 import { fetchBankEmails, parseEmailToTransaction } from '../lib/gmail'
-import { analyzeFinances } from '../lib/ai'
 import type { Transaction, Insight } from '../types'
 import StatCard from '../components/StatCard'
 import TransactionList from '../components/TransactionList'
