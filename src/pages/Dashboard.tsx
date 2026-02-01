@@ -11,7 +11,7 @@ import {
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
 import { fetchBankEmails, parseEmailToTransaction } from '../lib/gmail'
-// import { analyzeFinances } from '../lib/ai' // TODO: Enable when Edge Functions are ready
+import { analyzeFinances } from '../lib/ai'
 import type { Transaction, Insight } from '../types'
 import StatCard from '../components/StatCard'
 import TransactionList from '../components/TransactionList'
@@ -119,17 +119,41 @@ export default function Dashboard() {
     // Update state
     setTransactions(prev => [...(inserted || []), ...prev])
 
-    // Skip AI analysis for now (Edge Functions not deployed)
-    // TODO: Enable when Edge Functions are ready
-    /*
+    // Categorize with AI
+    try {
+      const { data: catData } = await supabase.functions.invoke('categorize-transaction', {
+        body: { transactions: inserted }
+      })
+      
+      if (catData?.categories) {
+        // Update transactions with AI categories
+        for (const cat of catData.categories) {
+          if (inserted && inserted[cat.index]) {
+            await supabase
+              .from('transactions')
+              .update({ 
+                category: cat.category, 
+                ai_categorized: true 
+              })
+              .eq('id', inserted[cat.index].id)
+          }
+        }
+        // Reload transactions to get updated categories
+        await loadTransactions()
+      }
+    } catch (catError) {
+      console.log('AI categorization skipped:', catError)
+    }
+
+    // Generate insights with AI
     try {
       const allTransactions = [...(inserted || []), ...transactions]
       const analysis = await analyzeFinances(allTransactions as Transaction[])
       
-      if (analysis.insights.length > 0) {
+      if (analysis.insights && analysis.insights.length > 0) {
         const { data: newInsights } = await supabase
           .from('insights')
-          .insert(analysis.insights.map(i => ({
+          .insert(analysis.insights.map((i: Partial<Insight>) => ({
             ...i,
             user_id: user.id,
             dismissed: false
@@ -141,7 +165,6 @@ export default function Dashboard() {
     } catch (aiError) {
       console.log('AI analysis skipped:', aiError)
     }
-    */
 
     setLastSync(new Date())
   }
