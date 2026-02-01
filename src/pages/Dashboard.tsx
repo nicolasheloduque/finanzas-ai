@@ -1,0 +1,432 @@
+import { useState, useEffect } from 'react'
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  Wallet,
+  LogOut,
+  BarChart3,
+  Sparkles,
+  Mail
+} from 'lucide-react'
+import { useAuth } from '../hooks/useAuth'
+import { supabase } from '../lib/supabase'
+import { fetchBankEmails, parseEmailToTransaction } from '../lib/gmail'
+// import { analyzeFinances } from '../lib/ai' // TODO: Enable when Edge Functions are ready
+import type { Transaction, Insight } from '../types'
+import StatCard from '../components/StatCard'
+import TransactionList from '../components/TransactionList'
+import CategoryChart from '../components/CategoryChart'
+import InsightCard from '../components/InsightCard'
+import SyncButton from '../components/SyncButton'
+
+export default function Dashboard() {
+  const { user, signOut, googleAccessToken } = useAuth()
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [insights, setInsights] = useState<Partial<Insight>[]>([])
+  const [loading, setLoading] = useState(true)
+  const [lastSync, setLastSync] = useState<Date | null>(null)
+  const [activeTab, setActiveTab] = useState<'overview' | 'transactions' | 'insights'>('overview')
+
+  // Load existing transactions on mount
+  useEffect(() => {
+    loadTransactions()
+  }, [user])
+
+  const loadTransactions = async () => {
+    if (!user) {
+      setLoading(false)
+      return
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('date', { ascending: false })
+
+      if (error) {
+        console.error('Error loading transactions:', error)
+      }
+      setTransactions(data || [])
+
+      // Load insights - don't fail if table doesn't exist
+      try {
+        const { data: insightsData } = await supabase
+          .from('insights')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('dismissed', false)
+          .order('created_at', { ascending: false })
+
+        setInsights(insightsData || [])
+      } catch (e) {
+        console.log('Insights not available:', e)
+        setInsights([])
+      }
+    } catch (error) {
+      console.error('Error loading data:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSync = async () => {
+    if (!googleAccessToken || !user) {
+      throw new Error('No hay conexión con Google. Intenta cerrar sesión y volver a entrar.')
+    }
+
+    // Fetch emails from Gmail
+    const emails = await fetchBankEmails(googleAccessToken)
+    
+    if (emails.length === 0) {
+      throw new Error('No se encontraron emails de bancos en los últimos 90 días')
+    }
+
+    // Parse emails to transactions
+    const newTransactions: Partial<Transaction>[] = []
+    
+    for (const email of emails) {
+      const parsed = parseEmailToTransaction(email)
+      if (parsed) {
+        // Check if we already have this transaction
+        const exists = transactions.some(t => t.raw_email_id === email.id)
+        if (!exists) {
+          newTransactions.push({
+            ...parsed,
+            user_id: user.id,
+            category: parsed.type === 'income' ? 'transferencias' : 'otros',
+            ai_categorized: false
+          })
+        }
+      }
+    }
+
+    if (newTransactions.length === 0) {
+      setLastSync(new Date())
+      return // No hay transacciones nuevas
+    }
+
+    // Save new transactions
+    const { data: inserted, error } = await supabase
+      .from('transactions')
+      .insert(newTransactions)
+      .select()
+
+    if (error) {
+      console.error('Error saving transactions:', error)
+      throw new Error('Error guardando transacciones: ' + error.message)
+    }
+
+    // Update state
+    setTransactions(prev => [...(inserted || []), ...prev])
+
+    // Skip AI analysis for now (Edge Functions not deployed)
+    // TODO: Enable when Edge Functions are ready
+    /*
+    try {
+      const allTransactions = [...(inserted || []), ...transactions]
+      const analysis = await analyzeFinances(allTransactions as Transaction[])
+      
+      if (analysis.insights.length > 0) {
+        const { data: newInsights } = await supabase
+          .from('insights')
+          .insert(analysis.insights.map(i => ({
+            ...i,
+            user_id: user.id,
+            dismissed: false
+          })))
+          .select()
+
+        setInsights(prev => [...(newInsights || []), ...prev])
+      }
+    } catch (aiError) {
+      console.log('AI analysis skipped:', aiError)
+    }
+    */
+
+    setLastSync(new Date())
+  }
+
+  // Calculate stats
+  const thisMonth = new Date().getMonth()
+  const thisYear = new Date().getFullYear()
+  
+  const monthlyTransactions = transactions.filter(t => {
+    const d = new Date(t.date)
+    return d.getMonth() === thisMonth && d.getFullYear() === thisYear
+  })
+
+  const totalExpenses = monthlyTransactions
+    .filter(t => t.type === 'expense')
+    .reduce((sum, t) => sum + t.amount, 0)
+
+  const totalIncome = monthlyTransactions
+    .filter(t => t.type === 'income')
+    .reduce((sum, t) => sum + t.amount, 0)
+
+  const balance = totalIncome - totalExpenses
+
+  const formatCurrency = (value: number) => 
+    new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(value)
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-midnight flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-mint/20 border-t-mint rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-mist">Cargando tus finanzas...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-midnight">
+      {/* Header */}
+      <header className="border-b border-white/5 bg-obsidian/50 backdrop-blur-xl sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-mint to-mint-dark flex items-center justify-center">
+                <TrendingUp className="w-5 h-5 text-midnight" />
+              </div>
+              <span className="font-display text-xl font-bold text-snow">
+                Finanzas<span className="gradient-text">AI</span>
+              </span>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <SyncButton onSync={handleSync} lastSync={lastSync} />
+              
+              <div className="flex items-center gap-3 pl-4 border-l border-white/10">
+                <img 
+                  src={user?.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${user?.email}`}
+                  alt="Avatar"
+                  className="w-8 h-8 rounded-full"
+                />
+                <button
+                  onClick={signOut}
+                  className="p-2 rounded-lg hover:bg-white/5 text-mist hover:text-snow transition-colors"
+                  title="Cerrar sesión"
+                >
+                  <LogOut className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Welcome message */}
+        <div className="mb-8 animate-fade-in">
+          <h1 className="font-display text-2xl font-bold text-snow mb-1">
+            Hola, {user?.user_metadata?.full_name?.split(' ')[0] || 'ahí'} 👋
+          </h1>
+          <p className="text-mist">
+            {transactions.length === 0 
+              ? 'Sincroniza tu correo para empezar a ver tus gastos'
+              : `Tienes ${monthlyTransactions.length} transacciones este mes`
+            }
+          </p>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-2">
+          <TabButton 
+            active={activeTab === 'overview'} 
+            onClick={() => setActiveTab('overview')}
+            icon={<BarChart3 className="w-4 h-4" />}
+          >
+            Resumen
+          </TabButton>
+          <TabButton 
+            active={activeTab === 'transactions'} 
+            onClick={() => setActiveTab('transactions')}
+            icon={<Wallet className="w-4 h-4" />}
+          >
+            Transacciones
+          </TabButton>
+          <TabButton 
+            active={activeTab === 'insights'} 
+            onClick={() => setActiveTab('insights')}
+            icon={<Sparkles className="w-4 h-4" />}
+            badge={insights.length > 0 ? insights.length : undefined}
+          >
+            Insights
+          </TabButton>
+        </div>
+
+        {/* Content based on active tab */}
+        {activeTab === 'overview' && (
+          <div className="space-y-6">
+            {/* Stats Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="animate-slide-up stagger-1 opacity-0">
+                <StatCard
+                  title="Gastos del mes"
+                  value={formatCurrency(totalExpenses)}
+                  icon={<TrendingDown className="w-5 h-5" />}
+                  variant="danger"
+                />
+              </div>
+              <div className="animate-slide-up stagger-2 opacity-0">
+                <StatCard
+                  title="Ingresos del mes"
+                  value={formatCurrency(totalIncome)}
+                  icon={<TrendingUp className="w-5 h-5" />}
+                  variant="success"
+                />
+              </div>
+              <div className="animate-slide-up stagger-3 opacity-0">
+                <StatCard
+                  title="Balance"
+                  value={formatCurrency(balance)}
+                  icon={<Wallet className="w-5 h-5" />}
+                  variant={balance >= 0 ? 'success' : 'danger'}
+                />
+              </div>
+              <div className="animate-slide-up stagger-4 opacity-0">
+                <StatCard
+                  title="Transacciones"
+                  value={monthlyTransactions.length.toString()}
+                  subtitle="este mes"
+                  icon={<Mail className="w-5 h-5" />}
+                />
+              </div>
+            </div>
+
+            {/* Charts and recent transactions */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Category breakdown */}
+              <div className="bg-obsidian rounded-2xl p-6 border border-white/5 animate-slide-up stagger-3 opacity-0">
+                <h2 className="font-display text-lg font-semibold text-snow mb-4">
+                  Gastos por categoría
+                </h2>
+                <CategoryChart transactions={monthlyTransactions} />
+              </div>
+
+              {/* Recent transactions */}
+              <div className="bg-obsidian rounded-2xl p-6 border border-white/5 animate-slide-up stagger-4 opacity-0">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-display text-lg font-semibold text-snow">
+                    Últimas transacciones
+                  </h2>
+                  <button 
+                    onClick={() => setActiveTab('transactions')}
+                    className="text-sm text-mint hover:text-mint-dark transition-colors"
+                  >
+                    Ver todas →
+                  </button>
+                </div>
+                <TransactionList transactions={transactions} limit={5} />
+              </div>
+            </div>
+
+            {/* Top insights */}
+            {insights.length > 0 && (
+              <div className="animate-slide-up stagger-5 opacity-0">
+                <h2 className="font-display text-lg font-semibold text-snow mb-4">
+                  Insights destacados
+                </h2>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {insights.slice(0, 2).map((insight, i) => (
+                    <InsightCard key={i} insight={insight} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'transactions' && (
+          <div className="bg-obsidian rounded-2xl p-6 border border-white/5 animate-fade-in">
+            <h2 className="font-display text-lg font-semibold text-snow mb-4">
+              Todas las transacciones
+            </h2>
+            <TransactionList transactions={transactions} />
+          </div>
+        )}
+
+        {activeTab === 'insights' && (
+          <div className="space-y-4 animate-fade-in">
+            <h2 className="font-display text-lg font-semibold text-snow">
+              Insights y recomendaciones
+            </h2>
+            {insights.length === 0 ? (
+              <div className="bg-obsidian rounded-2xl p-12 border border-white/5 text-center">
+                <Sparkles className="w-12 h-12 text-mint/50 mx-auto mb-4" />
+                <p className="text-mist">
+                  Sincroniza más transacciones para recibir insights personalizados
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4">
+                {insights.map((insight, i) => (
+                  <InsightCard 
+                    key={i} 
+                    insight={insight}
+                    onDismiss={async () => {
+                      if (insight.id) {
+                        await supabase
+                          .from('insights')
+                          .update({ dismissed: true })
+                          .eq('id', insight.id)
+                      }
+                      setInsights(prev => prev.filter((_, idx) => idx !== i))
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  )
+}
+
+function TabButton({ 
+  children, 
+  active, 
+  onClick, 
+  icon,
+  badge
+}: { 
+  children: React.ReactNode
+  active: boolean
+  onClick: () => void
+  icon: React.ReactNode
+  badge?: number
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`
+        flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all duration-200 whitespace-nowrap
+        ${active 
+          ? 'bg-mint text-midnight' 
+          : 'bg-white/5 text-mist hover:bg-white/10 hover:text-snow'
+        }
+      `}
+    >
+      {icon}
+      {children}
+      {badge !== undefined && (
+        <span className={`
+          px-1.5 py-0.5 rounded-full text-xs font-bold
+          ${active ? 'bg-midnight/20 text-midnight' : 'bg-mint text-midnight'}
+        `}>
+          {badge}
+        </span>
+      )}
+    </button>
+  )
+}
