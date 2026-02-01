@@ -50,22 +50,20 @@ export default function Dashboard() {
       }
       setTransactions(data || [])
 
-      // Load insights - don't fail if table doesn't exist
-      try {
-        const { data: insightsData } = await supabase
-          .from('insights')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('dismissed', false)
-          .order('created_at', { ascending: false })
+      // Load insights - don't fail if table doesn't exist or any error
+      const { data: insightsData } = await supabase
+        .from('insights')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('dismissed', false)
+        .order('created_at', { ascending: false })
 
-        setInsights(insightsData || [])
-      } catch (e) {
-        console.log('Insights not available:', e)
-        setInsights([])
-      }
+      setInsights(insightsData || [])
     } catch (error) {
       console.error('Error loading data:', error)
+      // Still set empty arrays on error
+      setTransactions([])
+      setInsights([])
     } finally {
       setLoading(false)
     }
