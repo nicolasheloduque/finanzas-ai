@@ -119,51 +119,80 @@ export default function Dashboard() {
     // Update state
     setTransactions(prev => [...(inserted || []), ...prev])
 
-    // Categorize with AI
+    // Categorize with AI - process in batches of 20
     try {
-      const { data: catData } = await supabase.functions.invoke('categorize-transaction', {
-        body: { transactions: inserted }
-      })
-      
-      if (catData?.categories) {
-        // Update transactions with AI categories
-        for (const cat of catData.categories) {
-          if (inserted && inserted[cat.index]) {
+      const BATCH_SIZE = 20
+      for (let i = 0; i < inserted.length; i += BATCH_SIZE) {
+        const batch = inserted.slice(i, i + BATCH_SIZE)
+        console.log(`Categorizando batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(inserted.length/BATCH_SIZE)}...`)
+        
+        const response = await fetch('https://cbxbolkkimnctfqerwrn.supabase.co/functions/v1/categorize-transaction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transactions: batch.map(t => ({ description: t.merchant, amount: t.amount }))
+          })
+        })
+        
+        const { categories, error } = await response.json()
+        
+        if (error) {
+          console.error('Error categorizando:', error)
+          continue
+        }
+        
+        // Update each transaction with its category
+        for (const cat of categories) {
+          const txn = batch[cat.index]
+          if (txn) {
             await supabase
               .from('transactions')
-              .update({ 
-                category: cat.category, 
-                ai_categorized: true 
-              })
-              .eq('id', inserted[cat.index].id)
+              .update({ category: cat.category, ai_categorized: true })
+              .eq('id', txn.id)
           }
         }
-        // Reload transactions to get updated categories
-        await loadTransactions()
       }
+      
+      // Reload to show updated categories
+      await loadTransactions()
     } catch (catError) {
-      console.log('AI categorization skipped:', catError)
+      console.error('AI categorization error:', catError)
     }
 
     // Generate insights with AI
     try {
       const allTransactions = [...(inserted || []), ...transactions]
-      const analysis = await analyzeFinances(allTransactions as Transaction[])
       
-      if (analysis.insights && analysis.insights.length > 0) {
+      const response = await fetch('https://cbxbolkkimnctfqerwrn.supabase.co/functions/v1/analyze-finances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactions: allTransactions })
+      })
+      
+      const { insights: aiInsights, error } = await response.json()
+      
+      if (error) {
+        console.error('Error generando insights:', error)
+      } else if (aiInsights && aiInsights.length > 0) {
+        // Clear old insights and add new ones
+        await supabase.from('insights').delete().eq('user_id', user.id)
+        
         const { data: newInsights } = await supabase
           .from('insights')
-          .insert(analysis.insights.map((i: Partial<Insight>) => ({
-            ...i,
+          .insert(aiInsights.map((i: any) => ({
+            type: i.type === 'warning' ? 'alert' : i.type === 'tip' ? 'recommendation' : 'saving',
+            title: i.title,
+            content: i.description,
+            priority: 'medium',
             user_id: user.id,
             dismissed: false
           })))
           .select()
 
-        setInsights(prev => [...(newInsights || []), ...prev])
+        setInsights(newInsights || [])
       }
     } catch (aiError) {
-      console.log('AI analysis skipped:', aiError)
+      console.error('AI analysis error:', aiError)
     }
 
     setLastSync(new Date())
