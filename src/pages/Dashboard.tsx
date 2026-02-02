@@ -9,7 +9,8 @@ import {
   Mail,
   ChevronLeft,
   ChevronRight,
-  Calendar
+  Calendar,
+  RefreshCw
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
@@ -32,6 +33,39 @@ export default function Dashboard() {
     const now = new Date()
     return { month: now.getMonth(), year: now.getFullYear() }
   })
+  const [generatingInsights, setGeneratingInsights] = useState(false)
+
+  // Generate AI insights
+  const generateAIInsights = async () => {
+    setGeneratingInsights(true)
+    try {
+      const response = await fetch('https://cbxbolkkimnctfqerwrn.supabase.co/functions/v1/generate-insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      const { insights: aiInsights, error } = await response.json()
+      
+      if (error) {
+        console.error('Error generating insights:', error)
+        return
+      }
+      
+      if (aiInsights && aiInsights.length > 0) {
+        // Transform to match our format
+        const formattedInsights = aiInsights.map((i: any) => ({
+          type: i.type === 'warning' ? 'alert' : i.type === 'tip' ? 'recommendation' : 'saving',
+          title: i.title,
+          content: i.description,
+          priority: i.type === 'warning' ? 'high' : 'medium'
+        }))
+        setInsights(formattedInsights)
+      }
+    } catch (error) {
+      console.error('Error:', error)
+    } finally {
+      setGeneratingInsights(false)
+    }
+  }
 
   // Load existing transactions on mount
   useEffect(() => {
@@ -481,24 +515,46 @@ export default function Dashboard() {
 
         {activeTab === 'transactions' && (
           <div className="bg-obsidian rounded-2xl p-6 border border-white/5 animate-fade-in">
-            <h2 className="font-display text-lg font-semibold text-snow mb-4">
-              Todas las transacciones
-            </h2>
-            <TransactionList transactions={transactions} />
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-display text-lg font-semibold text-snow">
+                Transacciones de {monthNames[selectedMonth.month]} {selectedMonth.year}
+              </h2>
+              <span className="text-sm text-mist">
+                {monthlyTransactions.length} transacciones
+              </span>
+            </div>
+            <TransactionList transactions={monthlyTransactions} />
           </div>
         )}
 
         {activeTab === 'insights' && (
           <div className="space-y-4 animate-fade-in">
-            <h2 className="font-display text-lg font-semibold text-snow">
-              Insights y recomendaciones
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-lg font-semibold text-snow">
+                Insights y recomendaciones
+              </h2>
+              <button
+                onClick={generateAIInsights}
+                disabled={generatingInsights}
+                className="flex items-center gap-2 px-4 py-2 bg-mint text-midnight rounded-xl font-medium hover:bg-mint-dark transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${generatingInsights ? 'animate-spin' : ''}`} />
+                {generatingInsights ? 'Analizando...' : 'Analizar con IA'}
+              </button>
+            </div>
             {insights.length === 0 ? (
               <div className="bg-obsidian rounded-2xl p-12 border border-white/5 text-center">
                 <Sparkles className="w-12 h-12 text-mint/50 mx-auto mb-4" />
-                <p className="text-mist">
-                  Sincroniza más transacciones para recibir insights personalizados
+                <p className="text-mist mb-4">
+                  Genera insights personalizados con inteligencia artificial
                 </p>
+                <button
+                  onClick={generateAIInsights}
+                  disabled={generatingInsights}
+                  className="px-6 py-3 bg-mint text-midnight rounded-xl font-medium hover:bg-mint-dark transition-colors disabled:opacity-50"
+                >
+                  {generatingInsights ? 'Analizando...' : 'Generar Insights con IA'}
+                </button>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4">
@@ -506,13 +562,7 @@ export default function Dashboard() {
                   <InsightCard 
                     key={i} 
                     insight={insight}
-                    onDismiss={async () => {
-                      if (insight.id) {
-                        await supabase
-                          .from('insights')
-                          .update({ dismissed: true })
-                          .eq('id', insight.id)
-                      }
+                    onDismiss={() => {
                       setInsights(prev => prev.filter((_, idx) => idx !== i))
                     }}
                   />
