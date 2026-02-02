@@ -6,7 +6,10 @@ import {
   LogOut,
   BarChart3,
   Sparkles,
-  Mail
+  Mail,
+  ChevronLeft,
+  ChevronRight,
+  Calendar
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
@@ -25,6 +28,10 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [lastSync, setLastSync] = useState<Date | null>(null)
   const [activeTab, setActiveTab] = useState<'overview' | 'transactions' | 'insights'>('overview')
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date()
+    return { month: now.getMonth(), year: now.getFullYear() }
+  })
 
   // Load existing transactions on mount
   useEffect(() => {
@@ -197,24 +204,63 @@ export default function Dashboard() {
     setLastSync(new Date())
   }
 
-  // Calculate stats
-  const thisMonth = new Date().getMonth()
-  const thisYear = new Date().getFullYear()
-  
+  // Calculate stats based on selected month
   const monthlyTransactions = transactions.filter(t => {
     const d = new Date(t.date)
-    return d.getMonth() === thisMonth && d.getFullYear() === thisYear
+    return d.getMonth() === selectedMonth.month && d.getFullYear() === selectedMonth.year
   })
 
   const totalExpenses = monthlyTransactions
     .filter(t => t.type === 'expense')
-    .reduce((sum, t) => sum + t.amount, 0)
+    .reduce((sum, t) => sum + Number(t.amount), 0)
 
   const totalIncome = monthlyTransactions
     .filter(t => t.type === 'income')
-    .reduce((sum, t) => sum + t.amount, 0)
+    .reduce((sum, t) => sum + Number(t.amount), 0)
 
-  const balance = totalIncome - totalExpenses
+  const totalTransfers = monthlyTransactions
+    .filter(t => t.type === 'transfer')
+    .reduce((sum, t) => sum + Number(t.amount), 0)
+
+  const balance = totalIncome - totalExpenses - totalTransfers
+
+  // Get available months from transactions
+  const availableMonths = [...new Set(transactions.map(t => {
+    const d = new Date(t.date)
+    return `${d.getFullYear()}-${d.getMonth()}`
+  }))].map(key => {
+    const [year, month] = key.split('-').map(Number)
+    return { year, month }
+  }).sort((a, b) => b.year - a.year || b.month - a.month)
+
+  const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+
+  const goToPreviousMonth = () => {
+    const currentIndex = availableMonths.findIndex(
+      m => m.month === selectedMonth.month && m.year === selectedMonth.year
+    )
+    if (currentIndex < availableMonths.length - 1) {
+      setSelectedMonth(availableMonths[currentIndex + 1])
+    }
+  }
+
+  const goToNextMonth = () => {
+    const currentIndex = availableMonths.findIndex(
+      m => m.month === selectedMonth.month && m.year === selectedMonth.year
+    )
+    if (currentIndex > 0) {
+      setSelectedMonth(availableMonths[currentIndex - 1])
+    }
+  }
+
+  const canGoPrevious = availableMonths.findIndex(
+    m => m.month === selectedMonth.month && m.year === selectedMonth.year
+  ) < availableMonths.length - 1
+
+  const canGoNext = availableMonths.findIndex(
+    m => m.month === selectedMonth.month && m.year === selectedMonth.year
+  ) > 0
 
   const formatCurrency = (value: number) => 
     new Intl.NumberFormat('es-CO', {
@@ -274,17 +320,55 @@ export default function Dashboard() {
 
       {/* Main content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Welcome message */}
-        <div className="mb-8 animate-fade-in">
-          <h1 className="font-display text-2xl font-bold text-snow mb-1">
-            Hola, {user?.user_metadata?.full_name?.split(' ')[0] || 'ahí'} 👋
-          </h1>
-          <p className="text-mist">
-            {transactions.length === 0 
-              ? 'Sincroniza tu correo para empezar a ver tus gastos'
-              : `Tienes ${monthlyTransactions.length} transacciones este mes`
-            }
-          </p>
+        {/* Welcome message and Month selector */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-8 gap-4 animate-fade-in">
+          <div>
+            <h1 className="font-display text-2xl font-bold text-snow mb-1">
+              Hola, {user?.user_metadata?.full_name?.split(' ')[0] || 'ahí'} 👋
+            </h1>
+            <p className="text-mist">
+              {transactions.length === 0 
+                ? 'Sincroniza tu correo para empezar a ver tus gastos'
+                : `${monthlyTransactions.length} transacciones en ${monthNames[selectedMonth.month]}`
+              }
+            </p>
+          </div>
+
+          {/* Month Selector */}
+          {availableMonths.length > 0 && (
+            <div className="flex items-center gap-2 bg-obsidian rounded-xl p-1 border border-white/5">
+              <button
+                onClick={goToPreviousMonth}
+                disabled={!canGoPrevious}
+                className={`p-2 rounded-lg transition-colors ${
+                  canGoPrevious 
+                    ? 'hover:bg-white/10 text-mist hover:text-snow' 
+                    : 'text-white/20 cursor-not-allowed'
+                }`}
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              
+              <div className="flex items-center gap-2 px-3 min-w-[160px] justify-center">
+                <Calendar className="w-4 h-4 text-mint" />
+                <span className="font-medium text-snow">
+                  {monthNames[selectedMonth.month]} {selectedMonth.year}
+                </span>
+              </div>
+              
+              <button
+                onClick={goToNextMonth}
+                disabled={!canGoNext}
+                className={`p-2 rounded-lg transition-colors ${
+                  canGoNext 
+                    ? 'hover:bg-white/10 text-mist hover:text-snow' 
+                    : 'text-white/20 cursor-not-allowed'
+                }`}
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Tabs */}
