@@ -10,7 +10,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Calendar,
-  RefreshCw
+  RefreshCw,
+  FileText,
+  X
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 import { supabase } from '../lib/supabase'
@@ -34,6 +36,59 @@ export default function Dashboard() {
     return { month: now.getMonth(), year: now.getFullYear() }
   })
   const [generatingInsights, setGeneratingInsights] = useState(false)
+  
+  // PDF Extractos state
+  const [showCedulaModal, setShowCedulaModal] = useState(false)
+  const [cedula, setCedula] = useState('')
+  const [processingPdf, setProcessingPdf] = useState(false)
+  const [pdfResult, setPdfResult] = useState<{ message: string; error?: boolean } | null>(null)
+
+  // Process PDF extractos
+  const processExtractos = async () => {
+    if (!cedula || cedula.length < 6) {
+      setPdfResult({ message: 'Por favor ingresa tu número de cédula', error: true })
+      return
+    }
+    
+    if (!googleAccessToken || !user) {
+      setPdfResult({ message: 'No hay conexión con Google. Intenta cerrar sesión y volver a entrar.', error: true })
+      return
+    }
+
+    setProcessingPdf(true)
+    setPdfResult(null)
+    
+    try {
+      const response = await fetch('https://cbxbolkkimnctfqerwrn.supabase.co/functions/v1/process-extractos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessToken: googleAccessToken,
+          cedula: cedula,
+          userId: user.id
+        })
+      })
+      
+      const data = await response.json()
+      
+      if (data.error) {
+        setPdfResult({ message: data.error, error: true })
+      } else {
+        setPdfResult({ message: data.message })
+        // Reload transactions
+        await loadTransactions()
+        // Close modal after success
+        setTimeout(() => {
+          setShowCedulaModal(false)
+          setPdfResult(null)
+        }, 3000)
+      }
+    } catch (error) {
+      setPdfResult({ message: 'Error procesando extractos', error: true })
+    } finally {
+      setProcessingPdf(false)
+    }
+  }
 
   // Generate AI insights
   const generateAIInsights = async () => {
@@ -333,6 +388,16 @@ export default function Dashboard() {
             <div className="flex items-center gap-4">
               <SyncButton onSync={handleSync} lastSync={lastSync} />
               
+              {/* Botón de extractos PDF */}
+              <button
+                onClick={() => setShowCedulaModal(true)}
+                className="flex items-center gap-2 px-3 py-2 bg-purple-500/20 text-purple-300 rounded-xl hover:bg-purple-500/30 transition-colors"
+                title="Importar extractos PDF"
+              >
+                <FileText className="w-4 h-4" />
+                <span className="hidden sm:inline text-sm font-medium">Extractos</span>
+              </button>
+              
               <div className="flex items-center gap-3 pl-4 border-l border-white/10">
                 <img 
                   src={user?.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${user?.email}`}
@@ -572,6 +637,87 @@ export default function Dashboard() {
           </div>
         )}
       </main>
+
+      {/* Modal para cédula - Extractos PDF */}
+      {showCedulaModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-obsidian rounded-2xl border border-white/10 p-6 max-w-md w-full animate-fade-in">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-purple-500/20 rounded-xl">
+                  <FileText className="w-6 h-6 text-purple-400" />
+                </div>
+                <div>
+                  <h2 className="font-display text-lg font-semibold text-snow">
+                    Importar Extractos PDF
+                  </h2>
+                  <p className="text-sm text-mist">
+                    Bancolombia encripta los PDFs con tu cédula
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowCedulaModal(false)
+                  setPdfResult(null)
+                }}
+                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-mist" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-mist mb-2">
+                  Número de cédula
+                </label>
+                <input
+                  type="text"
+                  value={cedula}
+                  onChange={(e) => setCedula(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Ej: 1020732887"
+                  className="w-full px-4 py-3 bg-midnight border border-white/10 rounded-xl text-snow placeholder-mist/50 focus:outline-none focus:border-mint transition-colors"
+                  maxLength={12}
+                />
+                <p className="text-xs text-mist mt-2">
+                  Tu cédula se usa solo para desencriptar los PDFs. No la almacenamos.
+                </p>
+              </div>
+
+              {pdfResult && (
+                <div className={`p-4 rounded-xl ${pdfResult.error ? 'bg-coral/20 text-coral' : 'bg-mint/20 text-mint'}`}>
+                  {pdfResult.message}
+                </div>
+              )}
+
+              <button
+                onClick={processExtractos}
+                disabled={processingPdf || cedula.length < 6}
+                className="w-full py-3 bg-purple-500 text-white rounded-xl font-medium hover:bg-purple-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {processingPdf ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Procesando extractos...
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-4 h-4" />
+                    Importar Extractos
+                  </>
+                )}
+              </button>
+
+              <div className="text-xs text-mist space-y-1">
+                <p>• Buscaremos extractos de Bancolombia en tu Gmail</p>
+                <p>• La IA extraerá y categorizará las transacciones</p>
+                <p>• Se evitarán duplicados con notificaciones existentes</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
